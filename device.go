@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/David89Lee/pyrolysis_ty_server/common/sse"
+	"github.com/David89Lee/pyrolysis_ty_server/model"
 	"go.uber.org/zap"
 )
 
@@ -106,6 +108,41 @@ func (m *ModbusRTU) ReadSample(addr byte) (SampleData, error) {
 	}, nil
 }
 
+// ToEvent 把采样结果转换成供 SSE 推送给前端的事件负载
+func (s SampleData) ToEvent() sse.SampleEvent {
+	return sse.SampleEvent{
+		Timestamp:      time.Now().Format(time.RFC3339),
+		Temperature:    s.Temperature,
+		Humidity:       s.Humidity,
+		PM1_0:          s.PM1_0,
+		PM2_5:          s.PM2_5,
+		PM10:           s.PM10,
+		TVOCSample:     s.TVOCSample,
+		TVOCBackground: s.TVOCBackground,
+		Pyrolysis:      s.Pyrolysis,
+		StatusCode:     s.StatusCode,
+		SensorNormal:   s.SensorNormal(),
+		Alarming:       s.Alarming(),
+	}
+}
+
+// ToRecord 把采样结果转换成待落库的记录，infoID 为该记录所属的信息ID（model.Record.InfoID）
+func (s SampleData) ToRecord(infoID uint) *model.Record {
+	return &model.Record{
+		InfoID:         infoID,
+		Temperature:    float32(s.Temperature),
+		Humidity:       float32(s.Humidity),
+		Pm1:            int16(s.PM1_0),
+		Pm2dot5:        int16(s.PM2_5),
+		Pm10:           int16(s.PM10),
+		TvocSampling:   int16(s.TVOCSample),
+		TvocBackground: int16(s.TVOCBackground),
+		Pyrolysis:      int16(s.Pyrolysis),
+		SensorState:    s.SensorNormal(),
+		Alarm:          s.Alarming(),
+	}
+}
+
 // Format 返回一行带单位的人类可读字符串
 func (s SampleData) Format() string {
 	sensor := "正常"
@@ -193,18 +230,22 @@ func (m *ModbusRTU) ReadThresholds(addr byte) (pm1_0, pm2_5, pm10, tvoc, tempera
 	return
 }
 
-// PollLoop 周期性采样并打印，interval 为采样周期
-func (m *ModbusRTU) PollLoop(addr byte, interval time.Duration) {
+// PollLoop 周期性采样并打印，interval 为采样周期。
+// onSample 可为 nil；非空时每次采样后回调（用于把数据推送给前端）
+func (m *ModbusRTU) PollLoop(addr byte, interval time.Duration, onSample func(SampleData, error)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		sample, err := m.ReadSample(addr)
-		ts := time.Now().Format("2006-01-02 15:04:05")
+		ts := time.Now().Format(time.RFC3339)
 		zap.L().Info("开始读取", zap.String("time", ts))
 		if err != nil {
 			zap.L().Error("读取失败", zap.Error(err))
 		} else {
 			zap.L().Info("读取成功", zap.String("sample", sample.Format()))
+		}
+		if onSample != nil {
+			onSample(sample, err)
 		}
 		<-ticker.C
 	}

@@ -11,8 +11,11 @@ const (
 	ErrorConnectWebSocket      = 610
 	ErrorReadWebSocket         = 611
 
-	ErrorCreateInfo = 10001
-	ErrorUpdateInfo = 10002
-	ErrorDeleteInfo = 10003
-	ErrorFindInfo   = 10004
+	ErrorCreateInfo  = 10001
+	ErrorUpdateInfo  = 10002
+	ErrorDeleteInfo  = 10003
+	ErrorFindInfo    = 10004
+	ErrorStartRecord = 10005
+	ErrorStopRecord  = 10006
+	ErrorFindRecord  = 10007
 )

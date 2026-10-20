@@ -68,7 +68,7 @@ func Setup() {
 		zap.L().Fatal("Gorm初始化失败", zap.Error(err))
 	}
 
-	err = DB.AutoMigrate()
+	err = DB.AutoMigrate(&Info{}, &Record{})
 	if err != nil {
 		zap.L().Error("Gorm自动迁移失败", zap.Error(err))
 	}

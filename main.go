@@ -4,13 +4,17 @@ import (
 	"fmt"
 
 	"github.com/David89Lee/pyrolysis_ty_server/common"
+	"github.com/David89Lee/pyrolysis_ty_server/common/sse"
 	"github.com/David89Lee/pyrolysis_ty_server/middleware"
 	"github.com/David89Lee/pyrolysis_ty_server/model"
 	"github.com/David89Lee/pyrolysis_ty_server/router"
+	"github.com/David89Lee/pyrolysis_ty_server/service/record_service"
 	"go.uber.org/zap"
 
 	"flag"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"go.bug.st/serial"
@@ -47,7 +51,14 @@ func main() {
 		}
 	}()
 
-	conn()
+	// 串口采集独立运行，失败时只记日志，不影响 HTTP / SSE 服务
+	go conn()
+
+	// 阻塞主线程，等待退出信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+	zap.L().Info("收到退出信号，服务停止")
 }
 
 // 默认参数（可通过命令行覆盖）
@@ -68,7 +79,7 @@ func conn() {
 
 	if *addr < 1 || *addr > 247 {
 		zap.L().Error("从机地址越界（1~247）", zap.Int("addr", *addr))
-		os.Exit(2)
+		return
 	}
 
 	// ===== 打开并配置串口（厂家默认: 9600, 8, N, 1） =====
@@ -81,7 +92,7 @@ func conn() {
 	com, err := serial.Open(*port, mode)
 	if err != nil {
 		zap.L().Error("打开串口失败", zap.String("port", *port), zap.Error(err))
-		os.Exit(1)
+		return
 	}
 	defer com.Close()
 	// 设置单次读取超时，避免 Read 长时间阻塞
@@ -102,7 +113,7 @@ func conn() {
 	deviceAddr, err := mb.ReadDeviceAddress(0xFF)
 	if err != nil {
 		zap.L().Error("读取设备地址失败", zap.Error(err))
-		os.Exit(1)
+		return
 	}
 	fmt.Printf("设备地址: %d\n", deviceAddr)
 
@@ -110,9 +121,12 @@ func conn() {
 	if sample, err := mb.ReadSample(slave); err != nil {
 		zap.L().Error("首次读取失败", zap.Error(err))
 		zap.L().Error("请检查: 串口路径/权限、波特率、从机地址、RS485 接线与换向方向")
-		os.Exit(1)
+		return
 	} else {
 		fmt.Printf("[首次] %s\n", sample.Format())
+		// 推送给已连接的 SSE 客户端
+		sse.DefaultHub.Publish(sample.ToEvent())
+		saveSample(sample)
 	}
 
 	// 读取一下报警阈值
@@ -127,5 +141,33 @@ func conn() {
 			zap.Uint16("Temperature", temperature))
 	}
 
-	mb.PollLoop(slave, *interval)
+	mb.PollLoop(slave, *interval, func(sample SampleData, err error) {
+		if err != nil {
+			sse.DefaultHub.Publish(sse.SampleEvent{
+				Timestamp: time.Now().Format(time.RFC3339),
+				Error:     err.Error(),
+			})
+			return
+		}
+		sse.DefaultHub.Publish(sample.ToEvent())
+		// 按落库开关写入数据库
+		saveSample(sample)
+	})
+}
+
+// saveSample 按落库开关把一次采样数据写入数据库：
+// InfoID > 0 时以该 id 作为 model.Record.InfoID 调用 CreateRecord 落库；
+// InfoID = 0 时表示停止记录，直接返回
+func saveSample(s SampleData) {
+	infoID := record_service.RecordInfoID()
+	if infoID == 0 {
+		return // 未开启记录
+	}
+	recordService := &record_service.RecordService{}
+	rec, err := recordService.CreateRecord(s.ToRecord(infoID))
+	if err != nil {
+		zap.L().Error("采样数据落库失败", zap.Uint("infoID", infoID), zap.Error(err))
+		return
+	}
+	zap.L().Info("采样数据已落库", zap.Uint("recordID", rec.ID), zap.Uint("infoID", infoID))
 }

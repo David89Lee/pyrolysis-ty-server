@@ -38,5 +38,14 @@ func InitRouter() *gin.Engine {
 	apiv1.DELETE("/info/:id", v1.DeleteInfo)
 	apiv1.GET("/info", v1.FindInfo)
 
+	// 采样数据实时推送（SSE）
+	apiv1.GET("/sample/stream", v1.SampleStream)
+
+	// 开启/停止采样数据落库（id>0 开始，id=0 停止）
+	apiv1.POST("/info/:id/record", v1.Record)
+
+	// 查询采样数据
+	apiv1.GET("/info/:id/record", v1.FindRecord)
+
 	return r
 }

@@ -54,8 +54,12 @@ func CreateRecord(record *Record) (*Record, error) {
 	return record, result.Error
 }
 
-func FindRecord(infoID uint) ([]*Record, error) {
+func FindRecord(pageNum, pageSize int, infoID uint) ([]*Record, int64, error) {
+	db := DB.Model(&Record{})
+	db = db.Where("info_id = ?", infoID)
+	var total int64
+	db.Count(&total)
 	var record []*Record
-	result := DB.Where("info_id = ?", infoID).Find(&record)
-	return record, result.Error
+	err := db.Offset((pageNum - 1) * pageSize).Limit(pageSize).Find(&record).Error
+	return record, total, err
 }
