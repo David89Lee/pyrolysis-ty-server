@@ -32,7 +32,7 @@ func CreateInfo(info *Info) (*Info, error) {
 }
 
 func UpdateInfo(info *Info) (*Info, error) {
-	result := DB.Save(info)
+	result := DB.Updates(info)
 	return info, result.Error
 }
 
